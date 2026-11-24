@@ -2,152 +2,177 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Emergency Area Map</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fire Incident Operations Map</title>
 
-  <link rel="stylesheet"
-    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet"
+href="https://js.arcgis.com/4.32/esri/themes/dark/main.css">
 
-  <style>
-    body {
-      margin: 0;
-      font-family: Arial, sans-serif;
-      background: #17212b;
-      color: white;
-    }
+<script src="https://js.arcgis.com/4.32/"></script>
 
-    h2 {
-      padding: 12px 20px;
-      margin: 0;
-    }
+<style>
+html, body, #viewDiv {
+  padding: 0;
+  margin: 0;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background: #171717;
+}
 
-    #status {
-      padding: 0 20px 10px;
-      font-size: 13px;
-      color: #cccccc;
-    }
+#status {
+  position: absolute;
+  z-index: 10;
+  top: 12px;
+  left: 12px;
+  background: #222;
+  color: white;
+  padding: 10px 14px;
+  border-radius: 6px;
+  font: 14px Arial, sans-serif;
+}
 
-    #map {
-      height: calc(100vh - 85px);
-      width: 100%;
-    }
+.pulse-marker {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  background: #990000;
+  border: 2px solid white;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  box-shadow: 0 0 5px #990000;
+}
 
-    .leaflet-overlay-pane path.pulse-boundary {
-      animation: firePulse 2s ease-in-out infinite;
-    }
+.pulse-marker::before {
+  content: "";
+  position: absolute;
+  inset: -5px;
+  border: 3px solid #990000;
+  border-radius: 50%;
+  animation: firePulse 1.8s ease-out infinite;
+}
 
-    @keyframes firePulse {
-      0%, 100% {
-        stroke-opacity: 0.45;
-        stroke-width: 2.5;
-        filter: drop-shadow(0 0 1px #990000);
-      }
-
-      50% {
-        stroke-opacity: 0.8;
-        stroke-width: 4;
-        filter: drop-shadow(0 0 4px #990000);
-      }
-    }
-  </style>
+@keyframes firePulse {
+  0% {
+    transform: scale(0.7);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(4);
+    opacity: 0;
+  }
+}
+</style>
 </head>
 
 <body>
 
-  <h2>Active Wildfire Areas</h2>
-  <div id="status">Loading wildfire perimeter data...</div>
-  <div id="map"></div>
+<div id="status">Fire Incident Operations Map</div>
+<div id="viewDiv"></div>
 
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+require([
+  "esri/Map",
+  "esri/views/MapView",
+  "esri/layers/FeatureLayer"
+], function(Map, MapView, FeatureLayer) {
 
-  <script>
-    // Create the map
-    const map = L.map("map").setView([39, -98], 4);
+  // INSERT YOUR FIRE INCIDENT FEATURE SERVICE URL HERE
+  const incidentURL = "PASTE_FIREMAP_INCIDENT_SERVICE_URL_HERE";
 
-    // Esri topographic basemap
-    L.tileLayer(
-      "https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}",
-      {
-        attribution: "Tiles &copy; Esri and its contributors"
+  const map = new Map({
+    basemap: "dark-gray-vector"
+  });
+
+  const view = new MapView({
+    container: "viewDiv",
+    map: map,
+    center: [-117.16, 32.72],
+    zoom: 8
+  });
+
+  const status = document.getElementById("status");
+  const markers = [];
+
+  if (incidentURL.startsWith("https://")) {
+
+    const incidents = new FeatureLayer({
+      url: incidentURL,
+      outFields: ["*"]
+    });
+
+    map.add(incidents);
+
+    async function updateIncidents() {
+      try {
+        await incidents.load();
+
+        const results = await incidents.queryFeatures({
+          where: "1=1",
+          outFields: ["*"],
+          returnGeometry: true
+        });
+
+        markers.forEach(marker => marker.remove());
+        markers.length = 0;
+
+        results.features.forEach(feature => {
+          if (!feature.geometry) return;
+
+          const point = feature.geometry;
+          const marker = document.createElement("div");
+          marker.className = "pulse-marker";
+          document.body.appendChild(marker);
+
+          marker.featurePoint = point;
+          markers.push(marker);
+        });
+
+        positionMarkers();
+
+        status.textContent =
+          "Active incidents displayed: " + markers.length;
+
+      } catch (error) {
+        status.textContent = "Unable to load incident data";
+        console.error(error);
       }
-    ).addTo(map);
+    }
 
-    // Create the wildfire polygon layer
-    const wildfireLayer = L.geoJSON(null, {
+    function positionMarkers() {
+      markers.forEach(marker => {
+        const screenPoint = view.toScreen(marker.featurePoint);
 
-      style: {
-        color: "#990000",
-        weight: 3,
-        opacity: 0.65,
-        fillColor: "#990000",
-        fillOpacity: 0.15,
-        className: "pulse-boundary"
-      },
+        if (!screenPoint || !view.extent) return;
 
-      onEachFeature: function(feature, layer) {
-        const p = feature.properties || {};
+        marker.style.left = screenPoint.x + "px";
+        marker.style.top = screenPoint.y + "px";
 
-        const name =
-          p.poly_IncidentName ||
-          p.attr_IncidentName ||
-          "Wildfire perimeter";
+        marker.style.display =
+          view.extent.contains(marker.featurePoint)
+          ? "block" : "none";
+      });
+    }
 
-        const acres =
-          p.poly_GISAcres ||
-          p.attr_IncidentSize;
+    view.when(async () => {
+      await updateIncidents();
 
-        const acreageText = acres
-          ? Math.round(acres).toLocaleString() + " acres"
-          : "Acreage not listed";
-
-        layer.bindPopup(
-          "<strong>" + name + "</strong><br>" + acreageText
-        );
-      }
-
-    }).addTo(map);
-
-    // NIFC current wildfire perimeter service
-    const wildfireUrl =
-      "https://services3.arcgis.com/T4QMspbfLg3qTGWY/ArcGIS/rest/services/WFIGS_Interagency_Perimeters_Current/FeatureServer/0/query?where=attr_IncidentTypeCategory%3D%27WF%27&outFields=*&returnGeometry=true&outSR=4326&f=geojson";
-
-    // Retrieve actual wildfire boundaries
-    fetch(wildfireUrl)
-
-      .then(response => {
-        if (!response.ok) {
-          throw new Error("Unable to retrieve wildfire data");
-        }
-
-        return response.json();
-      })
-
-      .then(data => {
-        if (data.error) {
-          throw new Error(data.error.message);
-        }
-
-        wildfireLayer.addData(data);
-
-        document.getElementById("status").textContent =
-          data.features.length +
-          " wildfire perimeter records loaded. Data source: NIFC.";
-
-        console.log(
-          "Wildfire perimeters loaded:",
-          data.features.length
-        );
-      })
-
-      .catch(error => {
-        document.getElementById("status").textContent =
-          "Wildfire data could not be loaded. Please try refreshing.";
-
-        console.error("Wildfire data error:", error);
+      view.watch("stationary", stationary => {
+        if (stationary) positionMarkers();
       });
 
-  </script>
+      setInterval(updateIncidents, 60000);
+    });
+
+  } else {
+    status.textContent =
+      "Waiting for Firemap Incidents service URL";
+  }
+
+});
+</script>
 
 </body>
 </html>
